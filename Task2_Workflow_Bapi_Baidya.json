@@ -1,0 +1,337 @@
+{
+  "name": "Task 2 - Daily Morning Tech & AI Intelligence Brief",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "node-trigger-schedule",
+      "name": "Schedule Trigger (Every 1h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        180,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "morning-brief",
+        "responseMode": "onReceived",
+        "responseData": "allEntries"
+      },
+      "id": "node-trigger-webhook",
+      "name": "Webhook Trigger (Manual / Curl)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        180,
+        420
+      ],
+      "webhookId": "9b15b3c4-3694-4d1b-852a-9cb8017bb124"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.github.com/search/repositories?q=topic:artificial-intelligence+stars:>500&sort=stars&order=desc&per_page=10",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "MorningBrief-n8n-Bot"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.v3+json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-http-fetch-trending",
+      "name": "HTTP: Fetch Trending AI Repos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        420,
+        320
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Defensive check: ensure data was received from GitHub API\nconst inputData = $input.first()?.json || {};\nconst rawItems = inputData.items || [];\n\nif (!Array.isArray(rawItems) || rawItems.length === 0) {\n  return [{\n    json: {\n      error: true,\n      status: inputData.status || 500,\n      message: inputData.message || 'No repository data returned from GitHub API (Rate limit or network error).',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// Keep only Top 5 repositories and reshape schema\nconst top5 = rawItems.slice(0, 5).map((repo, index) => ({\n  rank: index + 1,\n  id: repo.id,\n  name: repo.name,\n  full_name: repo.full_name,\n  owner: repo.owner?.login || 'unknown',\n  description: repo.description || 'No description provided.',\n  url: repo.html_url,\n  stars: repo.stargazers_count || 0,\n  forks: repo.forks_count || 0,\n  open_issues: repo.open_issues_count || 0,\n  language: repo.language || 'Markdown / Docs',\n  created_at: repo.created_at,\n  updated_at: repo.updated_at,\n  is_top_leader: index === 0\n}));\n\n// We output the top leader for secondary enrichment call\nreturn top5.map(item => ({ json: item }));\n"
+      },
+      "id": "node-code-reshape-top5",
+      "name": "Code: Filter & Reshape Top 5",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.full_name }}/releases/latest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "MorningBrief-n8n-Bot"
+            },
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.v3+json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-http-enrich-release",
+      "name": "HTTP: Enrich #1 Repo Latest Release",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        860,
+        320
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const enrichedRelease = $input.first()?.json || {};\nconst previousNodeData = $('Code: Filter & Reshape Top 5').all();\n\n// Extract primary enriched leader\nconst leader = previousNodeData[0]?.json || {};\nconst hasValidRelease = enrichedRelease.tag_name && !enrichedRelease.error;\n\nconst enrichedLeader = {\n  ...leader,\n  latest_release: hasValidRelease ? {\n    tag: enrichedRelease.tag_name,\n    name: enrichedRelease.name || enrichedRelease.tag_name,\n    published_at: enrichedRelease.published_at,\n    author: enrichedRelease.author?.login || 'Maintainer',\n    html_url: enrichedRelease.html_url\n  } : null,\n  has_release_info: !!hasValidRelease,\n  briefing_date: new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' }),\n  all_top_5: previousNodeData.map(i => i.json)\n};\n\nreturn [{ json: enrichedLeader }];\n"
+      },
+      "id": "node-code-merge-enrichment",
+      "name": "Code: Merge Enrichment & Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.stars }}",
+              "operation": "largerEqual",
+              "value2": 50000
+            }
+          ]
+        }
+      },
+      "id": "node-if-high-impact",
+      "name": "IF: Stars >= 50,000 (Viral / Flagship)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.NOTIFICATION_WEBHOOK_URL || 'https://discord.com/api/webhooks/YOUR_NOTIFICATION_CHANNEL' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"username\": \"Morning Intelligence Brief\",\n  \"avatar_url\": \"https://cdn-icons-png.flaticon.com/512/4712/4712035.png\",\n  \"content\": \"🔥 **[HIGH-PRIORITY BRIEF]** Viral Open-Source AI Project Spotlight detected!\",\n  \"embeds\": [\n    {\n      \"title\": \"🚀 #1 Spotlight: \" + $json.full_name + \" (\" + $json.stars.toLocaleString() + \" ⭐)\",\n      \"url\": $json.url,\n      \"description\": $json.description,\n      \"color\": 15158332,\n      \"fields\": [\n        {\n          \"name\": \"Primary Language\",\n          \"value\": \"`\" + $json.language + \"`\",\n          \"inline\": true\n        },\n        {\n          \"name\": \"Latest Release\",\n          \"value\": $json.latest_release ? \"[\" + $json.latest_release.tag + \"](\" + $json.latest_release.html_url + \")\" : \"*Rolling master (no tagged release)*\",\n          \"inline\": true\n        },\n        {\n          \"name\": \"Community Stats\",\n          \"value\": \"🍴 \" + $json.forks.toLocaleString() + \" forks | ❗ \" + $json.open_issues + \" issues\",\n          \"inline\": true\n        },\n        {\n          \"name\": \"Top 5 Trending Briefing\",\n          \"value\": $json.all_top_5.map(r => r.rank + \". [\" + r.name + \"](\" + r.url + \") - ⭐ \" + r.stars.toLocaleString() + \" (*\" + r.language + \"*)\").join(\"\\n\"),\n          \"inline\": false\n        }\n      ],\n      \"footer\": {\n        \"text\": \"Morning Briefing Service • \" + $json.briefing_date\n      }\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "node-http-post-high-priority",
+      "name": "HTTP: Dispatch High-Priority Brief",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.NOTIFICATION_WEBHOOK_URL || 'https://discord.com/api/webhooks/YOUR_NOTIFICATION_CHANNEL' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"username\": \"Morning Intelligence Brief\",\n  \"avatar_url\": \"https://cdn-icons-png.flaticon.com/512/4712/4712035.png\",\n  \"content\": \"ℹ️ **[DAILY MORNING BRIEF]** Today's Curated Open-Source AI Digest\",\n  \"embeds\": [\n    {\n      \"title\": \"📊 Today's Top AI Projects\",\n      \"color\": 3447003,\n      \"description\": $json.all_top_5.map(r => \"**\" + r.rank + \". [" + r.full_name + \"](\" + r.url + \")**\\n\" + r.description + \"\\n⭐ \" + r.stars.toLocaleString() + \" | `\" + r.language + \"`\").join(\"\\n\\n\"),\n      \"footer\": {\n        \"text\": \"Morning Briefing Service • \" + $json.briefing_date\n      }\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "node-http-post-standard",
+      "name": "HTTP: Dispatch Standard Brief",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fallback handler when API calls fail or return errors\nconst item = $input.first()?.json || {};\nconst isError = item.error || item.status >= 400 || !item.items;\n\nif (isError) {\n  return [{\n    json: {\n      status: 'FALLBACK_TRIGGERED',\n      errorMessage: item.message || 'External API threshold/rate limit reached.',\n      timestamp: new Date().toISOString(),\n      digest: 'Notice: Third-party API is temporarily degraded. The morning digest will automatically retry on the next hourly schedule.'\n    }\n  }];\n}\n\nreturn [];\n"
+      },
+      "id": "node-code-error-fallback",
+      "name": "Code: Fallback & Error Logger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.NOTIFICATION_WEBHOOK_URL || 'https://discord.com/api/webhooks/YOUR_NOTIFICATION_CHANNEL' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"username\": \"Morning Brief System Alert\",\n  \"avatar_url\": \"https://cdn-icons-png.flaticon.com/512/564/564619.png\",\n  \"content\": \"⚠️ **Workflow Graceful Degradation Warning**\",\n  \"embeds\": [\n    {\n      \"title\": \"API Rate Limit / Connectivity Incident Handled\",\n      \"color\": 16753920,\n      \"description\": $json.digest,\n      \"fields\": [\n        {\n          \"name\": \"Diagnostic Details\",\n          \"value\": $json.errorMessage\n        },\n        {\n          \"name\": \"Incident Timestamp\",\n          \"value\": $json.timestamp\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "node-http-post-error-alert",
+      "name": "HTTP: Dispatch Fallback Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        540
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (Every 1h)": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Fetch Trending AI Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger (Manual / Curl)": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Fetch Trending AI Repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Fetch Trending AI Repos": {
+      "main": [
+        [
+          {
+            "node": "Code: Filter & Reshape Top 5",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code: Fallback & Error Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Filter & Reshape Top 5": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Enrich #1 Repo Latest Release",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Enrich #1 Repo Latest Release": {
+      "main": [
+        [
+          {
+            "node": "Code: Merge Enrichment & Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Merge Enrichment & Context": {
+      "main": [
+        [
+          {
+            "node": "IF: Stars >= 50,000 (Viral / Flagship)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Stars >= 50,000 (Viral / Flagship)": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Dispatch High-Priority Brief",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP: Dispatch Standard Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Fallback & Error Logger": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Dispatch Fallback Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [
+    {
+      "name": "automation"
+    },
+    {
+      "name": "daily-brief"
+    },
+    {
+      "name": "qa"
+    }
+  ]
+}
+

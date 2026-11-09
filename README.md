@@ -1,65 +1,84 @@
-<br/><br/>
+# Automation & QA Developer — Take-Home Skills Assessment
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/media/realworld-dual-mode-white.svg">
-  <source media="(prefers-color-scheme: light)" srcset="assets/media/realworld-dual-mode-black.svg">
-  <img alt="RealWorld Example Applications" src="assets/media/realworld-dual-mode-grey.svg">
-</picture>
+**Candidate:** Bapi Baidya  
+**Role:** Automation & QA Developer  
+**Target Web App:** Conduit RealWorld ([demo.realworld.show](https://demo.realworld.show) & [api.realworld.show](https://api.realworld.show/api))  
+**Loom Walkthrough Video:** *[Insert Your Public Loom Video Link Here]*  
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/media/frameworks-white.svg">
-    <source media="(prefers-color-scheme: light)" srcset="assets/media/frameworks-black.svg">
-    <img src="assets/media/frameworks-grey.svg" alt="Frontend and Backend Frameworks" width="720"/>
-  </picture>
-</p>
+---
 
-<br/>
+## Overview
 
-### See how [_the exact same_ Medium.com clone](https://demo.realworld.show) is built using different [frontends](https://codebase.show/projects/realworld?category=frontend) and [backends](https://codebase.show/projects/realworld?category=backend)
+This repository contains the completed take-home assessment demonstrating web application quality assurance, API integration, and production-grade **n8n** automation workflows with proactive error handling.
 
-You can combine any frontend with any backend, because **they all adhere to the same [API spec](specs/api/)**
+---
 
-While most "todo" demos provide an excellent cursory glance at a framework's capabilities, they typically don't convey the knowledge required to actually build _real_ applications with it — nor the real-world constraints a minimal demo never has to face.
+## 1. Task 1 — Web App QA & Debug Report
 
-**RealWorld** solves this problem by providing the same demo app for each framework, at a sweet spot between simplicity and breadth.
+A systematic diagnostic audit was performed across the Conduit RealWorld web application, testing user authentication, content CRUD, route state, tag arrays, and security headers.
 
-Join us on [GitHub Discussions!](https://github.com/realworld-apps/realworld/discussions) 🎉
+- **Full Report (PDF):** [`Task1_QA_Report_Bapi_Baidya.pdf`](Task1_QA_Report_Bapi_Baidya.pdf)
+- **Report Markdown Mirror:** [`Task1_QA_Report_Bapi_Baidya.md`](Task1_QA_Report_Bapi_Baidya.md)
 
-# Implementations
+### Summary of Identified Issues:
+1. **Duplicate Account Registration Overwrite (Critical):** `POST /api/users` accepts identical emails and usernames, re-issuing tokens without unique conflict checks.
+2. **Whitespace Article Title Generates Empty Slug (High):** Submitting a title containing only whitespace spaces generates `"slug": ""`, redirecting the client to `/article/` and breaking subsequent GET/PUT/DELETE routing.
+3. **Exposed Global Debug Object in Production (High):** Production bundle exposes `window.__conduit_debug__.getToken()` in DevTools, leaking plaintext JWT session tokens.
+4. **Missing Standard HTTP Security Headers (Medium):** Complete omission of CSP, HSTS, `X-Frame-Options`, and `X-Content-Type-Options`.
+5. **Unsanitized HTML in Tag Inputs (Medium):** Ingestion of raw HTML/script strings in tag input without regex or length sanitization.
 
-Over 100 implementations have been created using various languages, libraries, and frameworks.
+### Targeted Root-Cause Analysis (Issue #2):
+Loose truthiness checks (`if (!title)`) fail to detect whitespace strings. The subsequent regex replacement (`/[^a-z0-9]+/g`) strips all whitespace to an empty string `""`. Without a database `CHECK (length(trim(slug)) > 0)` constraint, the record is committed, breaking REST resource paths. Fixed via Zod schema trimming (`.trim().min(3)`), a defensive slug fallback (`untitled-${nanoid()}`), and DB check constraints.
 
-Explore them on [**CodebaseShow**](https://codebase.show/projects/realworld).
+---
 
-## Spec-compliant backends
+## 2. Task 2 — n8n API Integration Workflow (Morning Brief)
 
-These backends pass the full [API spec test suite](https://docs.realworld.show/specifications/backend/introduction/):
+A resilient daily briefing automation built in n8n that watches public open-source AI repositories, enriches the top trending project, evaluates community metrics, and delivers a formatted card to Discord/Slack.
 
-- [**Nitro + Prisma + Zod**](https://github.com/realworld-apps/nitro-prisma-zod-realworld-example-app) — TypeScript
-- [**Django Ninja**](https://github.com/c4ffein/realworld-django-ninja) — Python
+- **Exported Workflow File:** [`Task2_Workflow_Bapi_Baidya.json`](Task2_Workflow_Bapi_Baidya.json)
 
-# Create a new implementation
+### Architecture & Design Decisions:
+- **Triggers:** Dual-trigger architecture featuring a **Schedule Trigger** (runs every 1 hour) and a **Webhook Trigger** (`/morning-brief`) for instant on-demand testing via `curl`.
+- **First API (Discovery):** GitHub REST API (`GET /search/repositories?q=topic:artificial-intelligence+stars:>500&sort=stars&order=desc&per_page=10`). Chosen because it requires no API key, provides stable community metrics, and has strict schema contracts.
+- **Transformation (Code Node):** JavaScript code node validates payload integrity, extracts the **Top 5** projects, normalizes metadata (stars, forks, language, URLs), and isolates the #1 leader for deep enrichment.
+- **Second API (Enrichment):** GitHub Releases API (`GET /repos/{owner}/{repo}/releases/latest`). Enriches the top trending repo with latest release tag, changelog notes, and publish date.
+- **Conditional Branching (IF Node):** Evaluates if `stars >= 50,000`. Viral/flagship projects route to a high-priority spotlight card with custom highlights; standard digests route to a consolidated overview.
+- **Notification Output:** Formatted webhook request posting structured Discord/Slack embed cards with zero hardcoded credentials (`{{ $vars.NOTIFICATION_WEBHOOK_URL }}`).
+- **Defensive Error Handling:** Both HTTP nodes have `Continue On Fail: true`. If GitHub encounters rate limits or network degradation, the pipeline routes to an **Error & Fallback Node** that logs the incident and sends a graceful degradation alert instead of crashing silently.
 
-[**Create a new implementation >>>**](https://docs.realworld.show/implementation-creation/introduction/)
+### Workflow Canvas & Execution Evidence:
+![Task 2 Workflow Canvas](screenshots/task2_workflow_canvas.png)
+*Figure 1: Task 2 Workflow Canvas in n8n.*
 
-Or you can [view upcoming implementations (WIPs)](https://github.com/realworld-apps/realworld/discussions/categories/wip-implementations).
+![Task 2 Successful Execution](screenshots/task2_successful_execution.png)
+*Figure 2: Execution run showing parsed payload and successful notification dispatch.*
 
-# Learn more
+---
 
-- [Documentation introduction](https://docs.realworld.show/introduction/)
-- Every tutorial is built against the same [API spec](specs/api/) to ensure modularity of every frontend & backend
-- A shared [CSS theme](assets/theme/styles.css) is provided to build frontend implementations with identical UI/UX
-- A shared [E2E test suite](specs/e2e/) is available to validate frontend implementations
-- There is a hosted version of the backend API available for public usage at [api.realworld.show](https://api.realworld.show), no API keys required — demo accounts are provided, and real accounts can't see each other
-- There is an angular frontend plugged to this backend available at [demo.realworld.show](https://demo.realworld.show)
-- Interested in creating a new RealWorld stack? View our [starter guide & spec](https://docs.realworld.show/implementation-creation/introduction/)
+## 3. Bonus Task — Production Uptime & Latency Monitor
 
-# Logo Attribution
+A dedicated monitoring workflow pinging the web application every 5 minutes, measuring latency, and employing confirmation retry logic to eliminate false alarms.
 
-See [LICENSES_LOGOS.md](docs/non-included/LICENSES_LOGOS.md) for framework logo licensing and attribution details.
+- **Exported Workflow File:** [`Bonus_UptimeMonitor_Bapi_Baidya.json`](Bonus_UptimeMonitor_Bapi_Baidya.json)
 
-# Active Maintainers
+### Highlights:
+- **Ping & Latency Tracking:** Measures round-trip HTTP response time in milliseconds.
+- **Anti-Flap Retry Logic:** If a non-200 status code is received, the workflow waits 5 seconds and performs an automated confirmation retry before declaring an incident.
+- **Incident Escalation:** Confirmed outages dispatch a Critical Outage Card with status codes, latency before drop, and timestamps to the notification channel. Healthy checks update a rolling uptime metric.
 
-- **[c4ffein](https://github.com/c4ffein) - Maintainer** - maintains the spec, the test suites and the [demo website](https://demo.realworld.show)
-- **[Manuel Vila](https://github.com/mvila) - Maintainer** - creator of the [Layr framework](https://layrjs.com) and the [CodebaseShow website](https://codebase.show/)
+![Bonus Uptime Monitor Canvas](screenshots/bonus_uptime_monitor_canvas.png)
+*Figure 3: Bonus Task Uptime Sentinel Canvas.*
+
+---
+
+## 4. How to Import & Run in n8n
+
+1. Launch n8n locally or via cloud (`npx n8n`).
+2. Navigate to **Workflows &rarr; Import from File**.
+3. Select `Task2_Workflow_Bapi_Baidya.json` or `Bonus_UptimeMonitor_Bapi_Baidya.json`.
+4. Under **Variables / Credentials**, set `NOTIFICATION_WEBHOOK_URL` to your Discord or Slack webhook URL.
+5. Click **Test step** or trigger the Webhook URL directly:
+   ```bash
+   curl -X GET http://localhost:5678/webhook-test/morning-brief
+   ```

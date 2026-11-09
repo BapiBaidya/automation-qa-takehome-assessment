@@ -1,0 +1,310 @@
+{
+  "name": "Bonus - Production Uptime & Latency Monitor with Retry",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "node-trigger-schedule-5m",
+      "name": "Schedule Trigger (Every 5m)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        180,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "uptime-check",
+        "responseMode": "onReceived"
+      },
+      "id": "node-trigger-webhook-uptime",
+      "name": "Webhook Trigger (On-Demand Ping)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        180,
+        480
+      ],
+      "webhookId": "c458117d-e6b7-4a62-9e32-23fbe237a345"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    target_url: 'https://demo.realworld.show',\n    target_api: 'https://api.realworld.show/api/articles',\n    ping_start_ms: Date.now(),\n    check_timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "node-code-init-ping",
+      "name": "Code: Initialize Health Ping",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.target_url }}",
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "id": "node-http-ping-primary",
+      "name": "HTTP: Ping Target Web App",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        620,
+        380
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first()?.json || {};\nconst initData = $('Code: Initialize Health Ping').first()?.json || {};\nconst endMs = Date.now();\nconst latency = endMs - (initData.ping_start_ms || endMs);\n\n// n8n returns status code in execution metadata or response\nconst statusCode = response.statusCode || ($input.first()?.error ? ($input.first()?.error?.response?.status || 500) : 200);\nconst isSuccess = statusCode === 200 && !response.error;\n\nreturn [{\n  json: {\n    url: initData.target_url,\n    statusCode: statusCode,\n    is_healthy: isSuccess,\n    latency_ms: latency,\n    timestamp: initData.check_timestamp,\n    error_message: response.error?.message || (isSuccess ? null : 'Non-200 HTTP response received')\n  }\n}];"
+      },
+      "id": "node-code-calc-metrics",
+      "name": "Code: Calculate Latency & Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.is_healthy }}",
+              "value2": false
+            }
+          ]
+        }
+      },
+      "id": "node-if-failed",
+      "name": "IF: Unhealthy Status (!= 200)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1060,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "id": "node-wait-transient-retry",
+      "name": "Wait: 5s Before Retry",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        280
+      ],
+      "webhookId": "retry-wait-hook"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "node-http-retry-ping",
+      "name": "HTTP: Ping Retry (Confirmation)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        280
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const retryResponse = $input.first()?.json || {};\nconst initialMetrics = $('Code: Calculate Latency & Status').first()?.json || {};\n\nconst retryStatusCode = retryResponse.statusCode || ($input.first()?.error ? 500 : 200);\nconst stillFailed = retryStatusCode !== 200;\n\nreturn [{\n  json: {\n    target_url: initialMetrics.url,\n    initial_status: initialMetrics.statusCode,\n    retry_status: retryStatusCode,\n    confirmed_down: stillFailed,\n    initial_latency_ms: initialMetrics.latency_ms,\n    timestamp: new Date().toISOString(),\n    severity: 'CRITICAL_INCIDENT'\n  }\n}];"
+      },
+      "id": "node-code-eval-retry",
+      "name": "Code: Evaluate Retry Confirmation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1720,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.NOTIFICATION_WEBHOOK_URL || 'https://discord.com/api/webhooks/YOUR_NOTIFICATION_CHANNEL' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"username\": \"Uptime Sentinel Alert\",\n  \"avatar_url\": \"https://cdn-icons-png.flaticon.com/512/595/595067.png\",\n  \"content\": \"🚨 **[OUTAGE ALERT] Service Unavailability Confirmed!**\",\n  \"embeds\": [\n    {\n      \"title\": \"CRITICAL: Target Web App Down (HTTP \" + $json.retry_status + \")\",\n      \"color\": 15158332,\n      \"description\": \"The uptime monitor detected non-200 responses on both initial ping and automated 5-second confirmation retry.\",\n      \"fields\": [\n        {\n          \"name\": \"Monitored URL\",\n          \"value\": \"`\" + $json.target_url + \"`\",\n          \"inline\": false\n        },\n        {\n          \"name\": \"HTTP Status Code\",\n          \"value\": \"Initial: `\" + $json.initial_status + \"` | Retry: `\" + $json.retry_status + \"`\",\n          \"inline\": true\n        },\n        {\n          \"name\": \"Latency Before Drop\",\n          \"value\": $json.initial_latency_ms + \" ms\",\n          \"inline\": true\n        },\n        {\n          \"name\": \"Incident Trigger Time\",\n          \"value\": $json.timestamp,\n          \"inline\": false\n        }\n      ],\n      \"footer\": {\n        \"text\": \"Automated Uptime Sentinel • Retry confirmed incident\"\n      }\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "node-http-post-downtime-alert",
+      "name": "HTTP: Dispatch Outage Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1960,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const metrics = $input.first()?.json || {};\n\nreturn [{\n  json: {\n    status: 'HEALTHY',\n    target_url: metrics.url,\n    http_status: metrics.statusCode,\n    latency_ms: metrics.latency_ms,\n    timestamp: metrics.timestamp,\n    summary: `App healthy (${metrics.latency_ms}ms response time)`\n  }\n}];"
+      },
+      "id": "node-code-log-healthy",
+      "name": "Code: Log Healthy Uptime Metric",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        480
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (Every 5m)": {
+      "main": [
+        [
+          {
+            "node": "Code: Initialize Health Ping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger (On-Demand Ping)": {
+      "main": [
+        [
+          {
+            "node": "Code: Initialize Health Ping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Initialize Health Ping": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Ping Target Web App",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Ping Target Web App": {
+      "main": [
+        [
+          {
+            "node": "Code: Calculate Latency & Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Calculate Latency & Status": {
+      "main": [
+        [
+          {
+            "node": "IF: Unhealthy Status (!= 200)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Unhealthy Status (!= 200)": {
+      "main": [
+        [
+          {
+            "node": "Wait: 5s Before Retry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code: Log Healthy Uptime Metric",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait: 5s Before Retry": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Ping Retry (Confirmation)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Ping Retry (Confirmation)": {
+      "main": [
+        [
+          {
+            "node": "Code: Evaluate Retry Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Evaluate Retry Confirmation": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Dispatch Outage Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [
+    {
+      "name": "monitoring"
+    },
+    {
+      "name": "uptime"
+    },
+    {
+      "name": "qa"
+    }
+  ]
+}
+
