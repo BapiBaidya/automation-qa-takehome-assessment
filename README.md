@@ -3,7 +3,6 @@
 **Candidate:** Bapi Baidya  
 **Role:** Automation & QA Developer  
 **Target Web App:** Conduit RealWorld ([demo.realworld.show](https://demo.realworld.show) & [api.realworld.show](https://api.realworld.show/api))  
-**Loom Walkthrough Video:** *[Insert Your Public Loom Video Link Here]*  
 
 ---
 
