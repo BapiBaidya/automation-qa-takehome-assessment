@@ -49,6 +49,7 @@ __pycache__
 .tmp
 LOOM_WALKTHROUGH.md
 Task1_QA_Report_Bapi_Baidya.html
+*.pdf
 
 # Local db
 dev.db

@@ -16,8 +16,7 @@ This repository contains the completed take-home assessment demonstrating web ap
 
 A systematic diagnostic audit was performed across the Conduit RealWorld web application, testing user authentication, content CRUD, route state, tag arrays, and security headers.
 
-- **Full Report (PDF):** [`Task1_QA_Report_Bapi_Baidya.pdf`](Task1_QA_Report_Bapi_Baidya.pdf)
-- **Report Markdown Mirror:** [`Task1_QA_Report_Bapi_Baidya.md`](Task1_QA_Report_Bapi_Baidya.md)
+- **Full Report (Markdown):** [`Task1_QA_Report_Bapi_Baidya.md`](Task1_QA_Report_Bapi_Baidya.md) *(also submitted as attached PDF)*
 
 ### Summary of Identified Issues:
 1. **Duplicate Account Registration Overwrite (Critical):** `POST /api/users` accepts identical emails and usernames, re-issuing tokens without unique conflict checks.
